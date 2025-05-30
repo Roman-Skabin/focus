@@ -7,28 +7,97 @@ tokenize_jai :: (using buffer: *Buffer, start_offset := -1, count := -1) -> [] B
         token := get_next_token(*tokenizer);
         if token.type == .eof break;
 
+        hacked_color : bool;
+
         // Maybe retroactively highlight a function
         before_prev, prev := tokenizer.last_tokens[0], tokenizer.last_tokens[1];
         if token.type == .punctuation && token.punctuation == .l_paren {
             if prev.type == .identifier {
-                // Handle "func("
-                memset(tokens.data + prev.start, xx Token_Type.function, prev.len);
+                identifier := string.{ prev.len, *tokenizer.buf[prev.start] };
+                if !containsName(*g_types, identifier) {
+                    // Handle "func("
+                    before_prev.type = .function;
+                    memset(tokens.data + prev.start, xx Token_Type.function, prev.len);
+                }
             } else if before_prev.type == .identifier && prev.type == .operation && prev.operation == .double_colon {
                 // Handle "func :: ("
+                before_prev.type = .function;
                 memset(tokens.data + before_prev.start, xx Token_Type.function, before_prev.len);
             }
-        } else if (token.type == .keyword && token.keyword == .kw_inline) || (token.type == .directive && token.directive == .directive_bake_arguments) {
-            // Handle "func :: inline" and "func :: #bake_arguments"
-            if before_prev.type == .identifier && prev.type == .operation && prev.operation == .double_colon {
-                memset(tokens.data + before_prev.start, xx Token_Type.function, before_prev.len);
+        } else if token.type == .keyword {
+            if token.keyword == {
+                case .kw_inline;    #through;
+                case .kw_no_inline;
+                    // Handle "func :: inline", "func :: no_inline"
+                    if before_prev.type == .identifier && prev.type == .operation && prev.operation == .double_colon {
+                        before_prev.type = .function;
+                        memset(tokens.data + before_prev.start, xx Token_Type.function, before_prev.len);
+                    }
+
+                case .kw_struct;     #through;
+                case .kw_union;      #through;
+                case .kw_enum;       #through;
+                case .kw_enum_flags;
+                    if before_prev.type == .identifier && prev.type == .operation && prev.operation == .double_colon {
+                        type_name := string.{ before_prev.len, *tokenizer.buf[before_prev.start] };
+                        addNameIfNew(*g_types, type_name);
+                        memset(tokens.data + before_prev.start, xx Token_Type.type, before_prev.len);
+                    }
             }
+        } else if token.type == .directive {
+            if token.directive == {
+                case .directive_import;
+                    if before_prev.type == .identifier && prev.type == .operation && prev.operation == .double_colon {
+                        namespace := string.{ before_prev.len, *tokenizer.buf[before_prev.start] };
+                        addNameIfNew(*g_namespaces, namespace);
+                        if removeName(*g_types, namespace) {
+                            memset(tokens.data + before_prev.start, xx Token_Type.identifier, before_prev.len);
+                        }
+                    }
+
+                case .directive_bake_arguments;
+                    // Handle "func :: #bake_arguments"
+                    if before_prev.type == .identifier && prev.type == .operation && prev.operation == .double_colon {
+                        before_prev.type = .function;
+                        memset(tokens.data + before_prev.start, xx Token_Type.function, before_prev.len);
+                    }
+            }
+        } else if token.type == .identifier {
+            identifier := string.{ token.len, *tokenizer.buf[token.start] };
+            if #char "A" <= identifier[0] && identifier[0] <= #char "Z" {
+                if !containsName(*g_namespaces, identifier) {
+                    if identifier.count > 1 { // heuristically determined type
+                        identifier_it  := identifier.data + 1;
+                        identifier_end := identifier.data + identifier.count;
+                        while identifier_it < identifier_end {
+                            if #char "a" <= identifier_it.* && identifier_it.* <= #char "z" {
+                                memset(tokens.data + token.start, xx Token_Type.type, token.len);
+                                hacked_color = true;
+                                break;
+                            }
+                            identifier_it += 1;
+                        }
+                    } else {
+                        memset(tokens.data + token.start, xx Token_Type.type, token.len);
+                        hacked_color = true;
+                    }
+                }
+            } else if containsName(*g_types, identifier) {
+                memset(tokens.data + token.start, xx Token_Type.type, token.len);
+                hacked_color = true;
+            }
+        } else if token.type == .operation && token.operation == .triple_dash {
+            memset(tokens.data + token.start, xx Token_Type.keyword, token.len);
+            hacked_color = true;
         }
 
         // Remember last 2 tokens
         tokenizer.last_tokens[0] = tokenizer.last_tokens[1];
         tokenizer.last_tokens[1] = token;
 
-        highlight_token(buffer, token);
+        if !hacked_color {
+            highlight_token(buffer, token);
+        }
     }
 
     end_scope(*tokenizer, tokenizer.t - tokenizer.buf.data);
@@ -709,10 +778,14 @@ KEYWORDS :: string.[
 TYPE_KEYWORDS :: string.[
     "__reg", "bool", "float", "float32", "float64", "int", "reg", "s16", "s32", "s64", "s8", "string",
     "u16", "u32", "u64", "u8", "void", "v128", "Any", "Code", "Type",
+    // My types
+    "f32", "f64",
+    "v2f", "v3f", "v4f", "v2s", "v3s", "v4s", "v2u", "v3u", "v4u",
+    "m2x2", "m3x3", "m3x4", "m4x3", "m4x4",
 ];
 
 VALUE_KEYWORDS :: string.[
-    "context", "it", "it_index", "null", "true", "false", "temp",
+    "context", "it", "it_index", "null", "true", "false",
 ];
 
 DIRECTIVES :: string.[
@@ -800,3 +873,10 @@ MAX_DIRECTIVE_LENGTH :: #run -> s32 {
     for DIRECTIVES { if it.count > result then result = it.count; }
     return xx result;
 }
+
+//
+// Mine
+//
+
+g_namespaces : NamesTable;
+g_types      : NamesTable;
