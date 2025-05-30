@@ -10,19 +10,82 @@ tokenize_cpp :: (using buffer: *Buffer, start_offset := -1, count := -1) -> [] B
 
         using tokenizer;
 
-        prev_token := cast(*Token) prev_tokens[0];
+        prev_token   := cast(*Token) prev_tokens[0];
+        hacked_color : bool;
 
         // Maybe retroactively highlight a function
         if token.type == .punctuation && token.punctuation == .l_paren {
             // Handle "func("
-            if prev_token.type == .identifier {
+            if prev_token.type == .identifier || isSTLType(prev_token) {
                 memset(tokens.data + prev_token.start, xx Token_Type.function, prev_token.len);
             }
+        } else if token.type == .identifier {
+            identifier_name := string.{ token.len, *buf[token.start] };
+
+            check_token_for_being_type := true;
+            if prev_token.type == .keyword {
+                if prev_token.keyword == {
+                    case .kw_namespace;
+                        check_token_for_being_type = false;
+                        addNameOrChangeKind(*g_cppNames, identifier_name, .NAMESPACE);
+
+                    case .kw_class;  #through;
+                    case .kw_struct; #through;
+                    case .kw_union;
+                        check_token_for_being_type = false;
+                        addNameOrChangeKind(*g_cppNames, identifier_name, .TYPE);
+                        memset(tokens.data + token.start, xx Token_Type.type, token.len);
+                        hacked_color = true;
+
+                    case .kw_enum;
+                        check_token_for_being_type = false;
+                        addNameOrChangeKind(*g_cppNames, identifier_name, .ENUM);
+                        memset(tokens.data + token.start, xx Token_Type.type, token.len);
+                        hacked_color = true;
+                }
+            }
+
+            if check_token_for_being_type {
+                if #char "A" <= identifier_name[0] && identifier_name[0] <= #char "Z" {
+                    if !isNameAnyOfKinds(*g_cppNames, identifier_name, .NAMESPACE) {
+                        if identifier_name.count > 1 {
+                            identifier_name_it  := identifier_name.data + 1;
+                            identifier_name_end := identifier_name.data + identifier_name.count;
+                            while identifier_name_it < identifier_name_end {
+                                if #char "a" <= identifier_name_it.* && identifier_name_it.* <= #char "z" {
+                                    memset(tokens.data + token.start, xx Token_Type.type, token.len);
+                                    hacked_color = true;
+                                    break;
+                                }
+                                identifier_name_it += 1;
+                            }
+                        } else {
+                            memset(tokens.data + token.start, xx Token_Type.type, token.len);
+                            hacked_color = true;
+                        }
+                    }
+                } else if isNameAnyOfKinds(*g_cppNames, identifier_name, .TYPE) {
+                    if isSTLType(identifier_name) {
+                        if prev_token.type == .operation && prev_token.operation == .colon {
+                            memset(tokens.data + token.start, xx Token_Type.type, token.len);
+                            hacked_color = true;
+                        }
+                    } else {
+                        memset(tokens.data + token.start, xx Token_Type.type, token.len);
+                        hacked_color = true;
+                    }
+                }
+            }
+        } else if isSTLType(*token) && !(prev_token.type == .operation && prev_token.operation == .colon) {
+            memset(tokens.data + token.start, xx Token_Type.identifier, token.len);
+            hacked_color = true;
         }
 
         prev_token.* = token;
 
-        highlight_token(buffer, token);
+        if !hacked_color {
+            highlight_token(buffer, token);
+        }
     }
 
     return .[];
@@ -440,7 +503,44 @@ TYPE_KEYWORDS :: string.[
     "uintptr_t", "intmax_t", "uintmax_t", "wint_t", "size_t", "ssize_t", "ptrdiff_t", "sig_atomic_t", "time_t", "clock_t",
 
     // some STL types
-    "vector", "atomic", "atomic_flag", "array", "map", "unordered_map", "set", "unordered_set", "queue", "deque", "tree", "thread",
+    "__stl_type_begin",
+    "basic_string",      "string",      "wstring",      "u8string",      "u16string",      "u32string",
+    "basic_string_view", "string_view", "wstring_view", "u8string_view", "u16string_view", "u32string_view",
+    "ios_base",
+    "basic_ios",           "ios",           "wios",
+    "basic_streambuf",     "streambuf",     "wstreambuf",
+    "basic_istream",       "istream",       "wistream",
+    "basic_ostream",       "ostream",       "wostream",
+    "basic_iostream",      "iostream",      "wiostream",
+    "basic_filebuf",       "filebuf",       "wfilebuf",
+    "basic_ifstream",      "ifstream",      "wifstream",
+    "basic_ofstream",      "ofstream",      "wofstream",
+    "basic_fstream",       "fstream",       "wfstream",
+    "basic_stringbuf",     "stringbuf",     "wstringbuf",
+    "basic_istringstream", "istringstream", "wistringstream",
+    "basic_ostringstream", "ostringstream", "wostringstream",
+    "basic_stringstream",  "stringstream",  "wstringstream",
+    "basic_spanbuf",       "spanbuf",       "wspanbuf",
+    "basic_ispanstream",   "ispanstream",   "wispanstream",
+    "basic_ospanstream",   "ospanstream",   "wospanstream",
+    "basic_spanstream",    "spanstream",    "wspanstream",
+    "basic_syncbuf",       "syncbuf",       "wsyncbuf",
+    "basic_osyncstream",   "osyncstream",   "wosyncstream",
+    "streamoff", "streamsize", "fpos", "mbstate_t",
+    "streampos", "wstreampos", "u8streampos", "u16streampos", "u32streampos",
+    "io_errc", "iostream_category",
+    "vector", "array", "span", "map", "unordered_map", "set", "unordered_set", "queue", "deque", "stack", "tree", "list",
+    "unique_ptr", "shared_ptr", "auto_ptr",
+    "thread", "jthread", "stop_token", "stop_source", "stop_callback", "atomic", "atomic_ref", "atomic_flag", "atomic_bool",
+    "mutex", "timed_mutex", "recursive_mutex", "recursive_timed_mutex", "shared_mutex", "shared_timed_mutex",
+    "lock_guard", "scoped_lock", "unique_lock", "shared_lock",
+    "defer_lock_t", "try_to_lock_t", "adopt_lock_t",
+    "once_flag",
+    "conditional_variable", "conditional_variable_any",
+    "counting_semaphore", "binary_semaphore",
+    "latch", "barrier", "promise", "packaged_task",
+    "future", "shared_future", "future_error",
+    "__stl_type_end",
 ];
 
 VALUE_KEYWORDS :: string.[
@@ -490,7 +590,11 @@ KEYWORD_MAP :: #run -> Table(string, Keyword_Token) {
     #insert -> string {
         b: String_Builder;
         for KEYWORDS           append(*b, sprint("table_add(*table, \"%1\", Keyword_Token.{ type = .keyword,  keyword = .kw_%1 });\n", it));
-        for TYPE_KEYWORDS      append(*b, sprint("table_add(*table, \"%1\", Keyword_Token.{ type = .type,     keyword = .kw_%1 });\n", it));
+        for TYPE_KEYWORDS {
+            if !begins_with(it, "__stl_type_") {
+                append(*b, sprint("table_add(*table, \"%1\", Keyword_Token.{ type = .type,     keyword = .kw_%1 });\n", it));
+            }
+        }
         for VALUE_KEYWORDS     append(*b, sprint("table_add(*table, \"%1\", Keyword_Token.{ type = .value,    keyword = .kw_%1 });\n", it));
         for MODIFIER_KEYWORDS  append(*b, sprint("table_add(*table, \"%1\", Keyword_Token.{ type = .modifier, keyword = .kw_%1 });\n", it));
         return builder_to_string(*b);
@@ -519,7 +623,7 @@ DIRECTIVES_MAP :: #run -> Table(string, Directive) {
 MAX_KEYWORD_LENGTH :: #run -> s32 {
     result: s64;
     for KEYWORDS          { if it.count > result then result = it.count; }
-    for TYPE_KEYWORDS     { if it.count > result then result = it.count; }
+    for TYPE_KEYWORDS     { if it.count > result && !begins_with(it, "__stl_type_") then result = it.count; }
     for VALUE_KEYWORDS    { if it.count > result then result = it.count; }
     for MODIFIER_KEYWORDS { if it.count > result then result = it.count; }
     return xx result;
@@ -529,4 +633,31 @@ MAX_DIRECTIVE_LENGTH :: #run -> s32 {
     result: s64;
     for DIRECTIVES { if it.count > result then result = it.count; }
     return xx result;
+}
+
+//
+// Mine
+//
+
+isSTLType :: inline (token : *Token) -> bool {
+    return token.type == .keyword
+        && (.kw___stl_type_begin < token.keyword && token.keyword < .kw___stl_type_end);
+}
+
+isSTLType :: (identifier_name : string) -> bool {
+    stl_keywords_view : [] string = .{
+        count = cast(s64) (Keyword.kw___stl_type_end - (Keyword.kw___stl_type_begin + 1)),
+        data  = type_info(Keyword).names.data + cast(s64) (Keyword.kw___stl_type_begin + 1)
+    };
+
+    for stl_keywords_view {
+        assert(begins_with(it, "kw_"));
+        type_name := advance(it, "kw_".count);
+
+        if identifier_name == type_name {
+            return true;
+        }
+    }
+
+    return false;
 }
