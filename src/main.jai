@@ -15,6 +15,9 @@ main :: () {
 
     platform_setup();
 
+    createNamesTables();
+    defer destroyNamesTables();
+
     // Remember important directories
     config_dir = platform_config_dir();
     data_dir   = platform_data_dir();
@@ -1038,6 +1041,7 @@ focus_allocator: Allocator;
 #load "utils/aho_corasick.jai";
 #load "utils/char.jai";
 #load "utils/fifo_queue.jai";
+#load "utils/names_table.jai";
 #load "utils/ring_buffer.jai";
 #load "utils/utils.jai";
 #load "utils/unicode.jai";
