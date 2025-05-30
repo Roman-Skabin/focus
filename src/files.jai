@@ -108,11 +108,15 @@ get_lowercase_extension :: (path: string, greedy := true) -> string /* temp */, 
 }
 
 is_file_binary :: (file_data: string) -> bool {
-    // Check for zeroes in the file - if there are any, it's not a well-formed text file.
-    // There's a small chance that a binary file will have no zeroes, but it's the easiest
-    // thing to check, so that's what we're doing.
-    has_zeroes := find_index_from_left(file_data, byte = 0) >= 0;
-    return has_zeroes;
+    #if false {
+        // Check for zeroes in the file - if there are any, it's not a well-formed text file.
+        // There's a small chance that a binary file will have no zeroes, but it's the easiest
+        // thing to check, so that's what we're doing.
+        has_zeroes := find_index_from_left(file_data, byte = 0) >= 0;
+        return has_zeroes;
+    } else {
+        return false;
+    }
 }
 
 should_ignore_file :: (path: string, check_for_zeroes_if_needed := true) -> bool {
