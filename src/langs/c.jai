@@ -10,7 +10,8 @@ tokenize_c :: (using buffer: *Buffer, start_offset := -1, count := -1) -> [] Buf
 
         using tokenizer;
 
-        prev_token := cast(*Token) prev_tokens[0];
+        prev_token   := cast(*Token) prev_tokens[0];
+        hacked_color : bool;
 
         // Maybe retroactively highlight a function
         if token.type == .punctuation && token.punctuation == .l_paren {
@@ -18,11 +19,40 @@ tokenize_c :: (using buffer: *Buffer, start_offset := -1, count := -1) -> [] Buf
             if prev_token.type == .identifier {
                 memset(tokens.data + prev_token.start, xx Token_Type.function, prev_token.len);
             }
+        } else if token.type == .identifier {
+            identifier_name := string.{ token.len, *buf[token.start] };
+
+            if prev_token.type == .keyword && (prev_token.keyword == .kw_struct || prev_token.keyword == .kw_union || prev_token.keyword == .kw_enum) {
+                addNameOrChangeKind(*g_cNames, identifier_name, .TYPE);
+                memset(tokens.data + token.start, xx Token_Type.type, token.len);
+                hacked_color = true;
+            } else if isNameAnyOfKinds(*g_cNames, identifier_name, .TYPE) {
+                memset(tokens.data + token.start, xx Token_Type.type, token.len);
+                hacked_color = true;
+            } else if #char "A" <= identifier_name[0] && identifier_name[0] <= #char "Z" {
+                if identifier_name.count > 1 {
+                    identifier_name_it  := identifier_name.data + 1;
+                    identifier_name_end := identifier_name.data + identifier_name.count;
+                    while identifier_name_it < identifier_name_end {
+                        if #char "a" <= identifier_name_it.* && identifier_name_it.* <= #char "z" {
+                            memset(tokens.data + token.start, xx Token_Type.type, token.len);
+                            hacked_color = true;
+                            break;
+                        }
+                        identifier_name_it += 1;
+                    }
+                } else {
+                    memset(tokens.data + token.start, xx Token_Type.type, token.len);
+                    hacked_color = true;
+                }
+            }
         }
 
         prev_token.* = token;
 
-        highlight_token(buffer, token);
+        if !hacked_color {
+            highlight_token(buffer, token);
+        }
     }
 
     return .[];

@@ -279,7 +279,31 @@ parse_identifier_or_keyword :: (using tokenizer: *Jai_Tokenizer, token: *Token, 
 
 parse_identifier_keyword_or_function :: (using tokenizer: *Jai_Tokenizer, token: *Token, buffer: *Buffer) {
     parse_identifier_or_keyword(tokenizer, token, buffer);
-    defer highlight(tokenizer, token, buffer);
+    defer {
+        if token.type == .identifier {
+            identifier := string.{ token.len, *buf[token.start] };
+            if isNameAnyOfKinds(*g_jaiNames, identifier, .TYPE, .ENUM) {
+                token.type = .type;
+            } else if #char "A" <= identifier[0] && identifier[0] <= #char "Z" {
+                if !isNameAnyOfKinds(*g_jaiNames, identifier, .NAMESPACE) {
+                    if identifier.count > 1 {
+                        identifier_it  := identifier.data + 1;
+                        identifier_end := identifier.data + identifier.count;
+                        while identifier_it < identifier_end {
+                            if #char "a" <= identifier_it.* && identifier_it.* <= #char "z" {
+                                token.type = .type;
+                                break;
+                            }
+                            identifier_it += 1;
+                        }
+                    } else {
+                        token.type = .type;
+                    }
+                }
+            }
+        }
+        highlight(tokenizer, token, buffer);
+    }
 
     if token.type == .keyword return;
 
@@ -291,10 +315,17 @@ parse_identifier_keyword_or_function :: (using tokenizer: *Jai_Tokenizer, token:
 
     // Check for:
     // func (
+    // type (
     if char == #char "(" {
         t += 1;
         next_token.type = .punctuation;
-        token.type = .function;
+
+        identifier := string.{ token.len, *buf[token.start] };
+        if isNameAnyOfKinds(*g_jaiNames, identifier, .TYPE) {
+            token.type = .type;
+        } else {
+            token.type = .function;
+        }
 
         set_token_len(tokenizer, *next_token);
         highlight(tokenizer, *next_token, buffer);
@@ -307,6 +338,11 @@ parse_identifier_keyword_or_function :: (using tokenizer: *Jai_Tokenizer, token:
     // func :: no_inline
     // func :: #bake_arguments
     // func :: #bake_constants
+    // type :: struct
+    // type :: union
+    // type :: enum
+    // type :: enum_flags
+    // type :: #type
     if char == #char ":" {
         t += 1;
         parse_colon(tokenizer, *next_token);
@@ -314,7 +350,7 @@ parse_identifier_keyword_or_function :: (using tokenizer: *Jai_Tokenizer, token:
         set_token_len(tokenizer, *next_token);
         highlight(tokenizer, *next_token, buffer);
 
-        if next_token.operation != .double_colon return;  // not a function
+        if next_token.operation != .double_colon return;
 
         next_token = start_new_token(tokenizer);
         if t >= max_t return;
@@ -332,14 +368,42 @@ parse_identifier_keyword_or_function :: (using tokenizer: *Jai_Tokenizer, token:
             t += 1;
             parse_directive(tokenizer, *next_token, buffer);
             highlight(tokenizer, *next_token, buffer);
-            if next_token.type == .directive && (next_token.directive == .directive_bake_arguments || next_token.directive == .directive_bake_constants) {
-                token.type = .function;
+            if next_token.type == .directive {
+                if next_token.directive == {
+                    case .directive_bake_arguments; #through;
+                    case .directive_bake_constants;
+                        token.type = .function;
+
+                    case .directive_import;
+                        namespace := string.{ token.len, *buf[token.start] };
+                        addNameOrChangeKind(*g_jaiNames, namespace, .NAMESPACE);
+
+                    case .directive_type;
+                        token.type = .type;
+                        type_name := string.{ token.len, *buf[token.start] };
+                        addNameOrChangeKind(*g_jaiNames, type_name, .TYPE);
+                }
             }
         } else if ascii_is_alpha(char) {
-            parse_identifier_or_keyword(tokenizer, *next_token, buffer);
-            highlight(tokenizer, *next_token, buffer);
-            if next_token.type == .keyword && (next_token.keyword == .kw_inline || next_token.keyword == .kw_no_inline) {
-                token.type = .function;
+            parse_identifier_keyword_or_function(tokenizer, *next_token, buffer);
+            if next_token.type == .keyword {
+                if next_token.keyword == {
+                    case .kw_inline; #through;
+                    case .kw_no_inline;
+                        token.type = .function;
+
+                    case .kw_struct; #through;
+                    case .kw_union;
+                        token.type = .type;
+                        type_name := string.{ token.len, *buf[token.start] };
+                        addNameOrChangeKind(*g_jaiNames, type_name, .TYPE);
+
+                    case .kw_enum; #through;
+                    case .kw_enum_flags;
+                        token.type = .type;
+                        type_name := string.{ token.len, *buf[token.start] };
+                        addNameOrChangeKind(*g_jaiNames, type_name, .ENUM);
+                }
             }
         }
     }
@@ -548,23 +612,29 @@ parse_period_or_enum_variant :: (using tokenizer: *Jai_Tokenizer, token: *Token)
     if t >= max_t return;
 
     // Maybe it's an enum variant
-    is_enum_variant := !(  last_token.type == .identifier
-                        || last_token.type == .string_literal
-                        || last_token.type == .multiline_string
-                        || (   last_token.type == .punctuation
-                            && (   last_token.punctuation == .period                  // ..whatever
-                                || last_token.punctuation == .r_bracket               // [asdf].whatever
-                                || last_token.punctuation == .r_paren))               // (asdf).whatever
-                        || (   last_token.type == .value
-                            && (   last_token.keyword == .kw_context                  // context.whatever
-                                || last_token.keyword == .kw_it                       // it.whatever
-                                || last_token.keyword == .kw_it_index))               // it_index.whatever
-                        || (   last_token.type == .directive
-                            && (   last_token.directive == .directive_caller_location // #caller_location.whatever
-                                || last_token.directive == .directive_Context         // #Context.whatever
-                                || last_token.directive == .directive_file            // #file.whatever
-                                || last_token.directive == .directive_filepath        // #filepath.whatever
-                                || last_token.directive == .directive_this)));        // #this.whatever
+    is_enum_variant : bool = ---;
+    if last_token.type == .type {
+        last_identifier := string.{ last_token.len, *buf[last_token.start] };
+        is_enum_variant = isNameAnyOfKinds(*g_jaiNames, last_identifier, .ENUM);
+    } else {
+        is_enum_variant = !(   last_token.type == .identifier
+                            || last_token.type == .string_literal
+                            || last_token.type == .multiline_string
+                            || (   last_token.type == .punctuation
+                                && (   last_token.punctuation == .period                  // ..whatever
+                                    || last_token.punctuation == .r_bracket               // [asdf].whatever
+                                    || last_token.punctuation == .r_paren))               // (asdf).whatever
+                            || (   last_token.type == .value
+                                && (   last_token.keyword == .kw_context                  // context.whatever
+                                    || last_token.keyword == .kw_it                       // it.whatever
+                                    || last_token.keyword == .kw_it_index))               // it_index.whatever
+                            || (   last_token.type == .directive
+                                && (   last_token.directive == .directive_caller_location // #caller_location.whatever
+                                    || last_token.directive == .directive_Context         // #Context.whatever
+                                    || last_token.directive == .directive_file            // #file.whatever
+                                    || last_token.directive == .directive_filepath        // #filepath.whatever
+                                    || last_token.directive == .directive_this)));        // #this.whatever
+    }
 
     if is_enum_variant {
         eat_white_space(tokenizer, only_until_newline = true);
@@ -731,10 +801,13 @@ KEYWORDS :: string.[
 TYPE_KEYWORDS :: string.[
     "__reg", "bool", "float", "float32", "float64", "int", "reg", "s16", "s32", "s64", "s8", "string",
     "u16", "u32", "u64", "u8", "void", "v128", "Any", "Code", "Type",
+    // My types
+    "f32", "f64",
+    "v2f", "v3f", "v4f", "v2s", "v3s", "v4s", "v2u", "v3u", "v4u",
 ];
 
 VALUE_KEYWORDS :: string.[
-    "context", "it", "it_index", "null", "true", "false", "temp",
+    "context", "it", "it_index", "null", "true", "false",
 ];
 
 DIRECTIVES :: string.[
@@ -824,3 +897,4 @@ MAX_DIRECTIVE_LENGTH :: #run -> s32 {
 }
 
 MAX_IDENTIFIER_LENGTH :: 512;
+
