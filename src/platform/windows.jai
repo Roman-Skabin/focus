@@ -269,6 +269,34 @@ platform_get_troubleshooting_info :: () -> string {
     return "<not implemented>";
 }
 
+// non-recursive, not shared across processes
+Platform_RWLock :: SRWLOCK;
+
+platform_create_rwlock :: inline (lock : *Platform_RWLock) {
+    lock.ptr = null;
+}
+
+platform_destroy_rwlock :: inline (lock : *Platform_RWLock) {
+}
+
+platform_try_lock_rwlock :: inline (lock : *Platform_RWLock, $read := false) -> bool {
+    success := #ifx read then TryAcquireSRWLockShared(lock) else TryAcquireSRWLockExclusive(lock);
+    return success != 0;
+}
+
+platform_lock_rwlock :: inline (lock : *Platform_RWLock, $read := false) {
+    #if read then AcquireSRWLockShared(lock); else AcquireSRWLockExclusive(lock);
+}
+
+platform_unlock_rwlock :: inline (lock : *Platform_RWLock, $read := false) {
+    #if read then ReleaseSRWLockShared(lock); else ReleaseSRWLockExclusive(lock);
+}
+
+platform_lock_rwlock_scoped :: (lock : *Platform_RWLock, $read := false) #expand {
+    platform_lock_rwlock(lock, read);
+    `defer platform_unlock_rwlock(lock, read);
+}
+
 #scope_file
 
 cursor_shown : s32 = 1;
@@ -329,6 +357,12 @@ SHGetKnownFolderPath :: (nFolder: REFGUID, dwFlags: DWORD, hToken: HANDLE, pszPa
 CoTaskMemFree :: (pv: *void) #foreign ole32;
 SendMessageW :: (hwnd: HWND, Msg: u32, wParam: WPARAM, lParam: LPARAM) -> LRESULT #foreign user32;
 RedrawWindow :: (hwnd: HWND, lprcUpdate: *RECT, hrgnUpdate: HANDLE, flags: u32) -> BOOL #foreign user32;
+TryAcquireSRWLockExclusive :: (SRWLock : *SRWLOCK) -> BOOLEAN #foreign kernel32;
+TryAcquireSRWLockShared :: (SRWLock : *SRWLOCK) -> BOOLEAN #foreign kernel32;
+AcquireSRWLockExclusive :: (SRWLock : *SRWLOCK) #foreign kernel32;
+AcquireSRWLockShared :: (SRWLock : *SRWLOCK) #foreign kernel32;
+ReleaseSRWLockExclusive :: (SRWLock : *SRWLOCK) #foreign kernel32;
+ReleaseSRWLockShared :: (SRWLock : *SRWLOCK) #foreign kernel32;
 
 RDW_INVALIDATE :: 0x0001;
 RDW_UPDATENOW  :: 0x0100;
@@ -368,3 +402,9 @@ DwmAttribute :: enum u32 {
     SYSTEMBACKDROP_TYPE;
     LAST;
 }
+
+SRWLOCK :: struct {
+    ptr : *void;
+}
+
+BOOLEAN :: u8;
