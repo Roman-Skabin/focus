@@ -170,6 +170,49 @@ platform_get_troubleshooting_info :: () -> string {
     return "<not implemented>";
 }
 
+// non-recursive, not shared across processes
+Platform_RWLock :: pthread_rwlock_t;
+
+platform_create_rwlock :: (lock : *Platform_RWLock) {
+    attr : pthread_rwlockattr_t;
+    error := pthread_rwlockattr_init(*attr);
+    assert(!error);
+
+    error = pthread_rwlockattr_setpshared(*attr, PTHREAD_PROCESS_PRIVATE);
+    assert(!error);
+
+    error = pthread_rwlock_init(lock, *attr);
+    assert(!error);
+
+    error = pthread_rwlockattr_destroy(*attr);
+    assert(!error);
+}
+
+platform_destroy_rwlock :: inline (lock : *Platform_RWLock) {
+    error := pthread_rwlock_destroy(lock);
+    assert(!error);
+}
+
+platform_try_lock_rwlock :: inline (lock : *Platform_RWLock, $read := false) -> bool {
+    error := #ifx read then pthread_rwlock_tryrdlock(lock) else pthread_rwlock_trywrlock(lock);
+    return !error;
+}
+
+platform_lock_rwlock :: inline (lock : *Platform_RWLock, $read := false) {
+    error := #ifx read then pthread_rwlock_rdlock(lock) else pthread_rwlock_wrlock(lock);
+    assert(!error);
+}
+
+platform_unlock_rwlock :: inline (lock : *Platform_RWLock, $read := false) {
+    error := pthread_rwlock_unlock(lock);
+    assert(!error);
+}
+
+platform_lock_rwlock_scoped :: (lock : *Platform_RWLock, $read := false) #expand {
+    platform_lock_rwlock(lock, read);
+    `defer platform_unlock_rwlock(lock, read);
+}
+
 #scope_file
 
 Monitor :: struct {
@@ -186,6 +229,7 @@ monitors : [..] Monitor;
 #import "Process";
 #import "Hash_Table";
 #import "Math";
+#import "POSIX";
 
 // We need to store the association between `Focus_Timer` instances and `NSTimer` instances externally
 // since currently we can't properly do instance variables for Cocoa classes (see the warning at the
