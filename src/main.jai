@@ -1022,6 +1022,7 @@ focus_allocator: Allocator;
 #load "utils/aho_corasick.jai";
 #load "utils/char.jai";
 #load "utils/fifo_queue.jai";
+#load "utils/names_table.jai";
 #load "utils/ring_buffer.jai";
 #load "utils/utils.jai";
 #load "utils/unicode.jai";
