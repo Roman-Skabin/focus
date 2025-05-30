@@ -227,6 +227,8 @@ reload_workspace :: (automatic := false) {
     deinit_editors();
     forget_ignore_table();
 
+    resetNamesTables();
+
     // Reinit things
     init_file_watcher();
     array_reset_keeping_memory(*project_dirs);
